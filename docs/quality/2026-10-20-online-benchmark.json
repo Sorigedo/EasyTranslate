@@ -1,0 +1,129 @@
+{
+  "provider": "mymemory",
+  "note": "Latency includes helper startup; no semantic accuracy claim",
+  "median_ms": 1201.5,
+  "p95_ms": 2134,
+  "errors": 0,
+  "cases": [
+    {
+      "id": "negation",
+      "text": "请不要现在付款，等我确认后再付。",
+      "must_preserve": "Do not pay now; wait for my confirmation.",
+      "response": {
+        "text": "Please do not pay now until I confirm."
+      },
+      "latency_ms": 1212,
+      "semantic_review": "PASS in this sample: addressee remains payer; no incorrect I will pay."
+    },
+    {
+      "id": "amount",
+      "text": "总价是1,500.25美元，不是15,000美元。",
+      "must_preserve": "Total USD 1,500.25, explicitly not USD 15,000.",
+      "response": {
+        "text": "The total price is $1,500.25, not $15,000."
+      },
+      "latency_ms": 916,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "time",
+      "text": "我们改到明天下午三点开会，不是今天。",
+      "must_preserve": "Meeting moved to 3 p.m. tomorrow, not today.",
+      "response": {
+        "text": "We rescheduled the meeting for tomorrow at 3pm, not today."
+      },
+      "latency_ms": 1864,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "polite_request",
+      "text": "方便的话，能请您今天下班前发我一份报价吗？",
+      "must_preserve": "Polite conditional request for a quotation before end of work today.",
+      "response": {
+        "text": "If it's convenient, could you please send me a quote before work today?"
+      },
+      "latency_ms": 1178,
+      "semantic_review": "FAILED: before work reverses before end of work."
+    },
+    {
+      "id": "conditional",
+      "text": "如果周五还没收到货，我们就取消订单。",
+      "must_preserve": "Cancellation conditional on not receiving goods by Friday.",
+      "response": {
+        "text": "If it doesn't arrive on Friday, we'll cancel the order."
+      },
+      "latency_ms": 1342,
+      "semantic_review": "CAUTION: on Friday is less precise than by Friday."
+    },
+    {
+      "id": "not_yet",
+      "text": "我还没确认，不代表我不同意。",
+      "must_preserve": "Not having confirmed yet does not mean disagreement.",
+      "response": {
+        "text": "Just because I haven't confirmed it doesn't mean I disagree."
+      },
+      "latency_ms": 1191,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "name_order",
+      "text": "请把订单AB-2026发给Alex，不要发给Alice。",
+      "must_preserve": "Order AB-2026 to Alex, explicitly not Alice.",
+      "response": {
+        "text": "Please send order AB-2026 to Alex, not Alice."
+      },
+      "latency_ms": 895,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "quantity",
+      "text": "先发两箱，每箱12件，剩下的下周再发。",
+      "must_preserve": "Two boxes first, twelve items each, remainder next week.",
+      "response": {
+        "text": "Two boxes of 12 pieces each will be dispatched first, and the rest will be dispatched next week."
+      },
+      "latency_ms": 968,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "casual",
+      "text": "我这边刚忙完，晚点给你回电话，可以吗？",
+      "must_preserve": "Just finished being busy; asks whether calling later is okay.",
+      "response": {
+        "text": "I just finished my work here. Can I call you back later?"
+      },
+      "latency_ms": 982,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "uncertainty",
+      "text": "这个价格可能还会调整，我现在不能保证。",
+      "must_preserve": "Price may change and cannot currently be guaranteed.",
+      "response": {
+        "text": "This price is subject to change and I can't guarantee it right now."
+      },
+      "latency_ms": 2134,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "timezone",
+      "text": "北京时间10月20日上午9点，也就是伦敦时间凌晨2点。",
+      "must_preserve": "Preserve given October 20 09:00 Beijing and 02:00 London; do not silently recalculate.",
+      "response": {
+        "text": "9:00 am Beijing time, 2:00 am London time on October 20."
+      },
+      "latency_ms": 1853,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    },
+    {
+      "id": "paragraphs",
+      "text": "第一批已经发出。\n\n第二批还没发，请不要重复下单。",
+      "must_preserve": "First batch shipped, second not yet; do not place duplicate order; preserve paragraphs.",
+      "response": {
+        "text": "The first batch has been sent.\n\nThe second batch has not been shipped yet, please do not repeat the order."
+      },
+      "latency_ms": 1940,
+      "semantic_review": "Manual spot-check: key facts appear preserved; not an accuracy guarantee."
+    }
+  ]
+}

@@ -1,0 +1,129 @@
+{
+  "provider": "Apple installed-language translation",
+  "note": "Latency includes helper startup; no semantic accuracy claim",
+  "median_ms": 118.5,
+  "p95_ms": 139,
+  "errors": 0,
+  "cases": [
+    {
+      "id": "negation",
+      "text": "请不要现在付款，等我确认后再付。",
+      "must_preserve": "Do not pay now; wait for my confirmation.",
+      "response": {
+        "text": "Please don't pay now. I will pay after I confirm."
+      },
+      "latency_ms": 112,
+      "semantic_review": "FAILED: payer changed from addressee to speaker; do not use this result for payment instructions."
+    },
+    {
+      "id": "amount",
+      "text": "总价是1,500.25美元，不是15,000美元。",
+      "must_preserve": "Total USD 1,500.25, explicitly not USD 15,000.",
+      "response": {
+        "text": "The total price is $1,500.25, not $15,000."
+      },
+      "latency_ms": 123,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "time",
+      "text": "我们改到明天下午三点开会，不是今天。",
+      "must_preserve": "Meeting moved to 3 p.m. tomorrow, not today.",
+      "response": {
+        "text": "Let's change the meeting to three o'clock tomorrow afternoon, not today."
+      },
+      "latency_ms": 127,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "polite_request",
+      "text": "方便的话，能请您今天下班前发我一份报价吗？",
+      "must_preserve": "Polite conditional request for a quotation before end of work today.",
+      "response": {
+        "text": "If it's convenient, could you please send me a quotation before you get off work today?"
+      },
+      "latency_ms": 120,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "conditional",
+      "text": "如果周五还没收到货，我们就取消订单。",
+      "must_preserve": "Cancellation conditional on not receiving goods by Friday.",
+      "response": {
+        "text": "If we haven't received the goods on Friday, we will cancel the order."
+      },
+      "latency_ms": 109,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "not_yet",
+      "text": "我还没确认，不代表我不同意。",
+      "must_preserve": "Not having confirmed yet does not mean disagreement.",
+      "response": {
+        "text": "I haven't confirmed it yet, which doesn't mean I don't agree."
+      },
+      "latency_ms": 110,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "name_order",
+      "text": "请把订单AB-2026发给Alex，不要发给Alice。",
+      "must_preserve": "Order AB-2026 to Alex, explicitly not Alice.",
+      "response": {
+        "text": "Please send the order AB-2026 to Alex, not to Alice."
+      },
+      "latency_ms": 117,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "quantity",
+      "text": "先发两箱，每箱12件，剩下的下周再发。",
+      "must_preserve": "Two boxes first, twelve items each, remainder next week.",
+      "response": {
+        "text": "Send two boxes first, 12 pieces each, and the rest will be sent next week."
+      },
+      "latency_ms": 139,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "casual",
+      "text": "我这边刚忙完，晚点给你回电话，可以吗？",
+      "must_preserve": "Just finished being busy; asks whether calling later is okay.",
+      "response": {
+        "text": "I'm just done. I'll call you back later, okay?"
+      },
+      "latency_ms": 124,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "uncertainty",
+      "text": "这个价格可能还会调整，我现在不能保证。",
+      "must_preserve": "Price may change and cannot currently be guaranteed.",
+      "response": {
+        "text": "The price may be adjusted, but I can't guarantee it now."
+      },
+      "latency_ms": 109,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "timezone",
+      "text": "北京时间10月20日上午9点，也就是伦敦时间凌晨2点。",
+      "must_preserve": "Preserve given October 20 09:00 Beijing and 02:00 London; do not silently recalculate.",
+      "response": {
+        "text": "9:00 a.m. Beijing time on October 20, that is, 2 a.m. London time."
+      },
+      "latency_ms": 120,
+      "semantic_review": "pending"
+    },
+    {
+      "id": "paragraphs",
+      "text": "第一批已经发出。\n\n第二批还没发，请不要重复下单。",
+      "must_preserve": "First batch shipped, second not yet; do not place duplicate order; preserve paragraphs.",
+      "response": {
+        "text": "The first batch has been sent out.\n\nThe second batch has not been sent yet. Please do not repeat the order."
+      },
+      "latency_ms": 114,
+      "semantic_review": "pending"
+    }
+  ]
+}
