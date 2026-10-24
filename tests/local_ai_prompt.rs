@@ -1,6 +1,6 @@
 use easytranslate::local_ai::{
     GlossaryEntry, Tone, apply_glossary_to_result, apply_glossary_to_source, build_messages,
-    seeded_glossary,
+    build_ollama_messages, seeded_glossary,
 };
 
 #[test]
@@ -66,6 +66,19 @@ fn prompts_include_only_enabled_matching_terms_present_in_source_and_keep_longes
     assert!(!messages[0].content.contains("firmware"));
     assert!(!messages[0].content.contains("program"));
     assert!(messages[1].content.contains("请更新驱动程序。"));
+}
+
+#[test]
+fn ollama_prompt_is_compact_while_preserving_translation_constraints() {
+    let glossary = seeded_glossary();
+    let regular = build_messages("请更新固件。", "zh-Hans", "en", Tone::Faithful, &glossary);
+    let compact = build_ollama_messages("请更新固件。", "zh-Hans", "en", Tone::Faithful, &glossary);
+    assert_eq!(compact.len(), 2);
+    assert!(compact[0].content.len() < regular[0].content.len());
+    assert!(compact[0].content.contains("Output only the translation"));
+    assert!(compact[0].content.contains("固件 → firmware"));
+    assert!(compact[0].content.contains("negation"));
+    assert_eq!(compact[1].content, "请更新固件。");
 }
 
 #[test]

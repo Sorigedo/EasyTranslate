@@ -41,7 +41,7 @@ fi
 password=$(<"$password_file")
 identity=$(<"$identity_file")
 security unlock-keychain -p "$password" "$keychain"
-if ! security find-identity -p codesigning "$keychain" | rg -Fq "$identity"; then
+if ! security find-identity -p codesigning "$keychain" | /usr/bin/grep -Fq -- "$identity"; then
   echo '本地代码签名身份不可用；已停止打包。' >&2
   exit 1
 fi

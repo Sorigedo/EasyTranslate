@@ -13,6 +13,7 @@ use std::sync::{
 pub enum Provider {
     LocalAi,
     Google,
+    LibreTranslate,
     OpenAiCli,
     LocalModel,
     SiliconFlow,
@@ -24,6 +25,7 @@ impl Provider {
         match self {
             Self::LocalAi => "本地开源模型",
             Self::Google => "谷歌翻译",
+            Self::LibreTranslate => "LibreTranslate",
             Self::OpenAiCli | Self::Llm => "OpenAI / 本机 Codex",
             Self::LocalModel => "本地模型",
             Self::SiliconFlow => "硅基流动",
@@ -38,6 +40,8 @@ pub struct Options {
     pub siliconflow_endpoint: String,
     pub siliconflow_model: String,
     pub siliconflow_api_key: String,
+    pub libretranslate_endpoint: String,
+    pub libretranslate_api_key: String,
     pub codex_model: String,
     pub local_translator: Option<Arc<crate::local_ai::LocalTranslator>>,
     pub tone: crate::local_ai::Tone,
@@ -51,6 +55,9 @@ impl Options {
                 Err("本地翻译服务尚未启动。".into())
             }
             Provider::LocalAi | Provider::LocalModel => Ok(()),
+            Provider::LibreTranslate if self.libretranslate_endpoint.trim().is_empty() => {
+                Err("请先在设置中填写 LibreTranslate 服务地址。".into())
+            }
             _ if !self.online_enabled => Err("请先启用联网翻译授权。".into()),
             _ => Ok(()),
         }
@@ -156,6 +163,7 @@ fn cache_source_key(provider: Provider, model: &str, source: &str) -> String {
         Provider::LocalAi => "local_ai".to_string(),
         Provider::LocalModel => format!("local_model:{model}"),
         Provider::Google => "google".to_string(),
+        Provider::LibreTranslate => format!("libretranslate:{}", model),
         Provider::OpenAiCli | Provider::Llm => "openai_cli".to_string(),
         Provider::SiliconFlow => "silicon_flow".to_string(),
     };
@@ -170,6 +178,13 @@ fn translate_part(
 ) -> Result<String, String> {
     match options.provider {
         Provider::Google => crate::llm::google_translate(text, source, target),
+        Provider::LibreTranslate => crate::llm::libretranslate_translate(
+            text,
+            source,
+            target,
+            &options.libretranslate_endpoint,
+            &options.libretranslate_api_key,
+        ),
         Provider::OpenAiCli | Provider::Llm => crate::llm::codex_exec_translate(
             text,
             source,

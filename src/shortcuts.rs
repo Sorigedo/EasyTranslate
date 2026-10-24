@@ -147,6 +147,8 @@ pub struct Config {
     #[serde(default)]
     pub active_service: usize,
     #[serde(default)]
+    pub comparison_services: Vec<String>,
+    #[serde(default)]
     pub llm_model: String,
     pub siliconflow_endpoint: String,
     pub siliconflow_model: String,
@@ -172,10 +174,12 @@ fn default_tone() -> crate::local_ai::Tone {
 
 impl Default for Config {
     fn default() -> Self {
+        let services = crate::service::default_services();
         Self {
             provider: crate::translation::Provider::LocalAi,
             online_enabled: false,
-            services: crate::service::default_services(),
+            comparison_services: crate::service::default_comparison_services(&services),
+            services,
             active_service: 0,
             llm_model: String::new(),
             siliconflow_endpoint: crate::llm::SILICONFLOW_DEFAULT_ENDPOINT.into(),
@@ -228,12 +232,31 @@ impl Config {
         }
         let mut config: Self = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
         migrate_legacy_provider(&mut config, &value);
+        if config.services.is_empty() {
+            config.services = crate::service::default_services();
+        } else if value.get("services").is_some()
+            && !config
+                .services
+                .iter()
+                .any(|service| service.kind == crate::service::ServiceKind::LibreTranslate)
+        {
+            let libretranslate_index =
+                crate::service::ensure_libretranslate_service(&mut config.services);
+            if libretranslate_index <= config.active_service {
+                config.active_service += 1;
+            }
+        }
         if config.services.is_empty() || config.active_service >= config.services.len() {
             config.active_service = 0;
         }
-        if config.services.is_empty() {
-            config.services = crate::service::default_services();
+        if value.get("comparison_services").is_none() {
+            config.comparison_services =
+                crate::service::default_comparison_services(&config.services);
         }
+        crate::service::normalize_comparison_services(
+            &config.services,
+            &mut config.comparison_services,
+        );
         // The selected service is the source of truth. Older builds could
         // leave the legacy provider field stale after a service changed.
         config.provider = config.services[config.active_service].provider();
@@ -327,15 +350,23 @@ fn migrate_legacy_provider(config: &mut Config, value: &serde_json::Value) {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    if let Some(entry) = services.get_mut(2)
+    if let Some(entry) = services
+        .iter_mut()
+        .find(|service| service.kind == crate::service::ServiceKind::OpenAiCli)
         && !legacy_llm_model.trim().is_empty()
     {
         entry.model = legacy_llm_model;
     }
     let mut active = match legacy {
         Some("local_ai" | "apple") => 0,
-        Some("google") => 1,
-        Some("llm") => 2,
+        Some("google") => services
+            .iter()
+            .position(|service| service.kind == crate::service::ServiceKind::Google)
+            .unwrap_or(0),
+        Some("llm") => services
+            .iter()
+            .position(|service| service.kind == crate::service::ServiceKind::OpenAiCli)
+            .unwrap_or(0),
         Some("silicon_flow" | "deep_seek" | "deep_seek_pro") => {
             services.push(crate::service::ServiceConfig::compatible(
                 "compat-1",

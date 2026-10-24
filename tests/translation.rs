@@ -71,6 +71,26 @@ fn siliconflow_provider_requires_online_consent() {
         siliconflow_endpoint: String::new(),
         siliconflow_model: String::new(),
         siliconflow_api_key: String::new(),
+        libretranslate_endpoint: String::new(),
+        libretranslate_api_key: String::new(),
+        codex_model: String::new(),
+        local_translator: None,
+        tone: easytranslate::local_ai::Tone::Faithful,
+        glossary: Vec::new(),
+    };
+    assert!(options.check().unwrap_err().contains("启用联网翻译"));
+}
+
+#[test]
+fn libretranslate_provider_requires_online_consent() {
+    let options = Options {
+        provider: Provider::LibreTranslate,
+        online_enabled: false,
+        siliconflow_endpoint: String::new(),
+        siliconflow_model: String::new(),
+        siliconflow_api_key: String::new(),
+        libretranslate_endpoint: "http://127.0.0.1:5000".into(),
+        libretranslate_api_key: String::new(),
         codex_model: String::new(),
         local_translator: None,
         tone: easytranslate::local_ai::Tone::Faithful,
@@ -161,6 +181,8 @@ fn saved_siliconflow_settings_are_used_by_the_translation_request() {
             siliconflow_endpoint: loaded.siliconflow_endpoint,
             siliconflow_model: loaded.siliconflow_model,
             siliconflow_api_key: loaded.siliconflow_api_key,
+            libretranslate_endpoint: String::new(),
+            libretranslate_api_key: String::new(),
             codex_model: loaded.llm_model,
             local_translator: None,
             tone: easytranslate::local_ai::Tone::Faithful,
@@ -187,6 +209,80 @@ fn saved_siliconflow_settings_are_used_by_the_translation_request() {
     assert!(!result.used_fallback);
 }
 
+#[test]
+fn libretranslate_service_is_used_for_translation_with_its_saved_endpoint_and_key() {
+    use std::{
+        io::{BufRead, BufReader, Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut request_line = String::new();
+        reader.read_line(&mut request_line).unwrap();
+        let mut content_length = 0;
+        let mut line = String::new();
+        loop {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" || line.is_empty() {
+                break;
+            }
+            if let Some((name, value)) = line.split_once(':')
+                && name.eq_ignore_ascii_case("content-length")
+            {
+                content_length = value.trim().parse::<usize>().unwrap();
+            }
+        }
+        let mut request_body = vec![0; content_length];
+        reader.read_exact(&mut request_body).unwrap();
+        let request_body: serde_json::Value = serde_json::from_slice(&request_body).unwrap();
+        let response = r#"{"translatedText":"Hello there."}"#;
+        write!(
+            reader.get_mut(),
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+            response.len()
+        )
+        .unwrap();
+        (request_line, request_body)
+    });
+
+    let result = translation::run(
+        Options {
+            provider: Provider::LibreTranslate,
+            online_enabled: true,
+            siliconflow_endpoint: String::new(),
+            siliconflow_model: String::new(),
+            siliconflow_api_key: String::new(),
+            libretranslate_endpoint: format!("http://{address}"),
+            libretranslate_api_key: "test-key".into(),
+            codex_model: String::new(),
+            local_translator: None,
+            tone: easytranslate::local_ai::Tone::Faithful,
+            glossary: Vec::new(),
+        },
+        "你好。",
+        "zh-Hans",
+        "en",
+        (Arc::new(AtomicU64::new(1)), 1),
+        Arc::new(Mutex::new(Cache::new(8))),
+        |_, _| {},
+    )
+    .unwrap();
+    let (request_line, request_body) = server.join().unwrap();
+
+    assert!(request_line.starts_with("POST /translate HTTP/1.1"));
+    assert_eq!(request_body["q"], "你好。");
+    assert_eq!(request_body["source"], "zh");
+    assert_eq!(request_body["target"], "en");
+    assert_eq!(request_body["api_key"], "test-key");
+    assert_eq!(result.text, "Hello there.");
+}
+
 struct StubRoute;
 impl TranslationRoute for StubRoute {
     fn translate_long(&self, text: &str) -> String {
@@ -211,6 +307,8 @@ fn local_provider_translates_each_paragraph_and_preserves_blank_lines() {
             siliconflow_endpoint: String::new(),
             siliconflow_model: String::new(),
             siliconflow_api_key: String::new(),
+            libretranslate_endpoint: String::new(),
+            libretranslate_api_key: String::new(),
             codex_model: String::new(),
             local_translator: Some(local),
             tone: easytranslate::local_ai::Tone::Faithful,
@@ -238,6 +336,8 @@ fn local_provider_cache_key_changes_when_tone_or_glossary_changes() {
         siliconflow_endpoint: String::new(),
         siliconflow_model: String::new(),
         siliconflow_api_key: String::new(),
+        libretranslate_endpoint: String::new(),
+        libretranslate_api_key: String::new(),
         codex_model: String::new(),
         local_translator: Some(local),
         tone: easytranslate::local_ai::Tone::CustomerService,

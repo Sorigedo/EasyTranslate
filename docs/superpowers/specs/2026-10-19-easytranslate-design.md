@@ -32,7 +32,7 @@ Apple 文档确认 TranslationSession 从 macOS 15 引入；Vision 的 VNRecogni
 
 LibreTranslate 是 AGPL-3.0 自部署翻译 API，基于 Argos Translate；Argos 仓库标识 MIT，提供 Python 离线翻译库。开源软件免费不等于公共服务器免费、无限额或始终可用。推荐对接用户自己的本地或自部署地址，不内置未经验证的公共节点。
 
-首版仅预留统一服务接口；LibreTranslate 的地址/密钥配置、连接测试和实际接入放在后续扩展。首版不安装 Python、下载 Argos 模型或部署服务器。模型与语言对可用性、模型许可证、中文聊天效果及本地资源消耗需在选择具体部署方案后单独核验。
+当前实现提供用户配置的 LibreTranslate 兼容服务：用户在设置中填写实例根地址和可选 API Key，客户端调用 `/translate`，并遵循联网授权后才发送原文。旧配置载入时会补入该服务且保留原有服务选择。客户端不安装 Python、不下载 Argos 模型，也不部署服务器。公共服务器可能要求 API Key、限流或不可用；模型与语言对可用性、模型许可证、中文聊天效果及本地资源消耗需由用户按具体部署方案核验。Google 网页接口仍作为独立选项保留，其上游限流/变更不由客户端控制。
 
 ## 首版实现建议（由开发者提出，待确认）
 
@@ -61,7 +61,7 @@ LibreTranslate 是 AGPL-3.0 自部署翻译 API，基于 Argos Translate；Argos
 
 ### 服务、权限与数据
 
-统一 TranslationProvider 接口负责语言支持、异步翻译、取消和可读错误；UI 不绑定某家服务。首版仅实现 Apple 后端；LibreTranslate 在后续版本作为用户主动配置的可选后端接入。禁止在离线后端失败后静默上传到云端。
+统一 TranslationProvider 接口负责语言支持、异步翻译、取消和可读错误；UI 不绑定某家服务。LibreTranslate 是用户主动配置的可选后端。禁止在离线后端失败后静默上传到云端。
 
 辅助功能权限用于选区读取及回填；录屏权限用于截图，只在相应功能首次使用时解释并请求。用户拒绝相关权限时，手动输入翻译仍可用。未来密钥存入 Keychain，不记录正文、截图或密钥；默认不保留历史。
 
@@ -120,7 +120,7 @@ LibreTranslate 是 AGPL-3.0 自部署翻译 API，基于 Argos Translate；Argos
 
 ### 后续扩展
 
-LibreTranslate 可选部署与连接测试、其他用户自带密钥的官方后端、主动选择的失败切换、鼠标划词按钮、更复杂输入框兼容。离线失败不静默切换联网。
+LibreTranslate 连接测试、其他用户自带密钥的官方后端、主动选择的失败切换、鼠标划词按钮、更复杂输入框兼容。离线失败不静默切换联网。
 
 不自研 OCR/翻译模型，不依赖未经验证的公共免费节点或网页逆向接口。开源客户端、开源引擎、免费云端额度是三个不同问题，分别验证。
 
@@ -146,6 +146,6 @@ LibreTranslate 可选部署与连接测试、其他用户自带密钥的官方�
 
 ## Implemented design amendments (2026-10-19)
 
-User-approved changes supersede the initial floating-input/SwiftUI design: Rust owns native AppKit windows and accessibility integration; a narrow Swift helper calls Apple Translation and Vision. A global hotkey binds the current editable chat field in any app exposing supported AX attributes. Input translation defaults to Option+A, selection to Option+D, screenshot to Command+Option+S, with an immediately applied settings window. Confirmation replaces the exact verified draft and never sends it. App and menu-bar identity use the character 译. A root 打包.command builds the app and ZIP.
+User-approved changes supersede the initial floating-input/SwiftUI design: Rust owns native AppKit windows and accessibility integration; a narrow Swift helper calls Apple Translation and Vision. A global hotkey binds the current editable chat field in any app exposing supported AX attributes. Input translation defaults to Option+A, selection to Option+D, screenshot to Command+Option+S, with an immediately applied settings window. Confirmation replaces the exact verified draft and never sends it. App and menu-bar identity use the character 译. A root run.command builds the app and ZIP.
 
 Free local translation is implemented, but semantic accuracy is not guaranteed: the public payment example changes the payer. Direct WeChat/WhatsApp acceptance remains outstanding. See README.md and docs/quality/2026-10-19-local-benchmark.json for current evidence and limits.

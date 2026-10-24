@@ -412,6 +412,41 @@ pub fn build_messages(
     ]
 }
 
+/// Builds the shorter prompt used by a local Ollama model. Ollama already
+/// receives the translation task as a structured chat request, so repeating
+/// the full safety guidance in two languages wastes prompt evaluation time.
+/// Keep the same user text and the constraints that affect translation
+/// correctness, while leaving the richer prompt available to online models.
+pub fn build_ollama_messages(
+    text: &str,
+    source: &str,
+    target: &str,
+    tone: Tone,
+    glossary: &[GlossaryEntry],
+) -> Vec<ChatMessage> {
+    let mut system = format!(
+        "Translate from {source} to {target}. Output only the translation. Preserve meaning, negation, conditions, amounts, dates, quantities, names, product IDs and line breaks. Do not add facts or explanations. {}",
+        tone.instruction(target)
+    );
+    let terms = matching_terms(text, source, target, glossary);
+    if !terms.is_empty() {
+        system.push_str(" Glossary (source → translation):");
+        for entry in terms {
+            system.push_str(&format!(" {} → {}", entry.source, entry.target));
+        }
+    }
+    vec![
+        ChatMessage {
+            role: "system".into(),
+            content: system,
+        },
+        ChatMessage {
+            role: "user".into(),
+            content: text.into(),
+        },
+    ]
+}
+
 pub fn profile_key(tone: Tone, glossary: &[GlossaryEntry]) -> String {
     let serialized = serde_json::to_vec(&(tone, glossary)).unwrap_or_default();
     let hash = serialized.iter().fold(0xcbf29ce484222325u64, |hash, byte| {

@@ -1,4 +1,4 @@
-use crate::local_ai::{ChatMessage, GlossaryEntry, Tone, build_messages};
+use crate::local_ai::{ChatMessage, GlossaryEntry, Tone, build_messages, build_ollama_messages};
 use std::{
     env,
     ffi::OsStr,
@@ -6,7 +6,7 @@ use std::{
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc,
+    sync::{OnceLock, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -17,7 +17,12 @@ const LLM_OVERALL_TIMEOUT: Duration = Duration::from_secs(180);
 const OLLAMA_PULL_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const OLLAMA_PULL_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const OLLAMA_PULL_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-const OLLAMA_MODEL_KEEP_ALIVE: &str = "5m";
+// Keep the runner resident while EasyTranslate is running. Loading a large
+// model is much slower than generating a short translation, so the normal
+// idle timeout makes every later translation feel brokenly slow.
+const OLLAMA_MODEL_KEEP_ALIVE: i32 = -1;
+const OLLAMA_CONTEXT_SIZE: u64 = 2048;
+const OLLAMA_MAX_OUTPUT_TOKENS: u64 = 256;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OllamaPullProgress {
@@ -78,11 +83,23 @@ fn http_agent() -> ureq::Agent {
         .build()
 }
 
+fn ollama_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(http_agent)
+}
+
 fn ollama_pull_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(4))
         .timeout_read(OLLAMA_PULL_READ_TIMEOUT)
         .timeout_write(OLLAMA_PULL_READ_TIMEOUT)
+        .build()
+}
+
+fn ollama_control_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(2))
+        .timeout(Duration::from_secs(5))
         .build()
 }
 
@@ -167,6 +184,7 @@ fn online_http_agent() -> ureq::Agent {
 
 fn google_request_error(error: &ureq::Error) -> String {
     match error {
+        ureq::Error::Status(429, _) => "谷歌翻译请求过于频繁（HTTP 429），请稍后重试".into(),
         ureq::Error::Status(status, _) => format!("谷歌翻译服务返回 HTTP {status}"),
         ureq::Error::Transport(transport) => match transport.kind() {
             ureq::ErrorKind::Dns => "无法解析谷歌翻译服务器地址，请检查网络或代理设置".into(),
@@ -180,21 +198,65 @@ fn google_request_error(error: &ureq::Error) -> String {
     }
 }
 
+fn google_endpoint_candidates(primary: &str, allow_public_fallback: bool) -> Vec<String> {
+    let primary = primary.trim();
+    if !allow_public_fallback {
+        return vec![primary.to_owned()];
+    }
+    let alternate = "https://translate.google.com/translate_a/single";
+    let mut endpoints = vec![primary.to_owned()];
+    if primary != alternate {
+        endpoints.push(alternate.to_owned());
+    }
+    endpoints
+}
+
+fn google_request(text: &str, source: &str, target: &str) -> Result<serde_json::Value, String> {
+    let primary = google_endpoint();
+    let configured = std::env::var("EASYTRANSLATE_GOOGLE_ENDPOINT")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    let mut last_error = None;
+    for (index, endpoint) in google_endpoint_candidates(&primary, !configured)
+        .into_iter()
+        .enumerate()
+    {
+        let request = online_http_agent()
+            .get(&endpoint)
+            .set("User-Agent", "Mozilla/5.0 EasyTranslate/1.0")
+            .set("Accept", "application/json,text/plain,*/*")
+            .query("client", "gtx")
+            .query("sl", source)
+            .query("tl", target)
+            .query("dt", "t")
+            .query("q", text)
+            .call();
+        match request {
+            Ok(response) => {
+                return response
+                    .into_json()
+                    .map_err(|error| format!("谷歌翻译返回了无效 JSON：{error}"));
+            }
+            Err(error) => {
+                let rate_limited = matches!(error, ureq::Error::Status(429, _));
+                last_error = Some(error);
+                if rate_limited && index == 0 {
+                    thread::sleep(Duration::from_millis(180));
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+    Err(google_request_error(
+        &last_error.expect("Google request attempts always produce a result"),
+    ))
+}
+
 /// Free Google Translate web endpoint; no API key required.
 pub fn google_translate(text: &str, source: &str, target: &str) -> Result<String, String> {
     let sl = if source == "auto" { "auto" } else { source };
-    let response = online_http_agent()
-        .get(&google_endpoint())
-        .query("client", "gtx")
-        .query("sl", sl)
-        .query("tl", target)
-        .query("dt", "t")
-        .query("q", text)
-        .call()
-        .map_err(|error| google_request_error(&error))?;
-    let value: serde_json::Value = response
-        .into_json()
-        .map_err(|error| format!("谷歌翻译返回了无效 JSON：{error}"))?;
+    let value = google_request(text, sl, target)?;
     let segments = value
         .get(0)
         .and_then(|entry| entry.as_array())
@@ -213,22 +275,87 @@ pub fn google_translate(text: &str, source: &str, target: &str) -> Result<String
 
 /// Google returns the detected source language at index 2 of the payload.
 pub fn google_detect(text: &str) -> Result<String, String> {
-    let value: serde_json::Value = online_http_agent()
-        .get(&google_endpoint())
-        .query("client", "gtx")
-        .query("sl", "auto")
-        .query("tl", "en")
-        .query("dt", "t")
-        .query("q", &text.chars().take(400).collect::<String>())
-        .call()
-        .map_err(|error| google_request_error(&error))?
-        .into_json()
-        .map_err(|error| format!("语言检测返回了无效 JSON：{error}"))?;
+    let value = google_request(&text.chars().take(400).collect::<String>(), "auto", "en")?;
     value
         .get(2)
         .and_then(|entry| entry.as_str())
         .map(str::to_string)
         .ok_or_else(|| "未能识别原文语言".into())
+}
+
+fn normalize_libretranslate_endpoint(endpoint: &str) -> Result<String, String> {
+    let endpoint = endpoint.trim().trim_end_matches('/');
+    if endpoint.is_empty() {
+        return Err("请先在设置中填写 LibreTranslate 服务地址".into());
+    }
+    if endpoint.ends_with("/translate") {
+        Ok(endpoint.to_owned())
+    } else {
+        Ok(format!("{endpoint}/translate"))
+    }
+}
+
+fn libretranslate_language_code(language: &str) -> &str {
+    match language {
+        "zh-Hans" => "zh",
+        _ => language,
+    }
+}
+
+fn libretranslate_request_error(error: &ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(401 | 403, _) => {
+            "LibreTranslate 认证失败，请检查实例地址和 API Key".into()
+        }
+        ureq::Error::Status(429, _) => "LibreTranslate 请求过于频繁，请稍后重试".into(),
+        ureq::Error::Status(400, _) => "LibreTranslate 拒绝了请求，请检查语言代码和 API Key".into(),
+        ureq::Error::Status(status, _) => format!("LibreTranslate 服务返回 HTTP {status}"),
+        ureq::Error::Transport(transport) => match transport.kind() {
+            ureq::ErrorKind::Dns => {
+                "无法解析 LibreTranslate 服务器地址，请检查网络或代理设置".into()
+            }
+            ureq::ErrorKind::ConnectionFailed | ureq::ErrorKind::ProxyConnect => {
+                "无法连接 LibreTranslate，请检查服务地址、网络或代理设置".into()
+            }
+            ureq::ErrorKind::ProxyUnauthorized => "代理认证失败，请检查代理设置".into(),
+            ureq::ErrorKind::InvalidProxyUrl => "代理地址无效，请检查代理设置".into(),
+            _ => "LibreTranslate 请求失败，请检查服务地址、网络或代理设置".into(),
+        },
+    }
+}
+
+/// Calls a LibreTranslate-compatible API. The service base URL may omit `/translate`.
+pub fn libretranslate_translate(
+    text: &str,
+    source: &str,
+    target: &str,
+    service_url: &str,
+    api_key: &str,
+) -> Result<String, String> {
+    let endpoint = normalize_libretranslate_endpoint(service_url)?;
+    let mut body = serde_json::json!({
+        "q": text,
+        "source": libretranslate_language_code(source),
+        "target": libretranslate_language_code(target),
+        "format": "text",
+    });
+    if !api_key.trim().is_empty() {
+        body["api_key"] = serde_json::Value::String(api_key.trim().to_owned());
+    }
+    let response = online_http_agent()
+        .post(&endpoint)
+        .set("Accept", "application/json")
+        .send_json(body)
+        .map_err(|error| libretranslate_request_error(&error))?;
+    let value: serde_json::Value = response
+        .into_json()
+        .map_err(|_| "LibreTranslate 返回了无效 JSON".to_string())?;
+    let translated = value
+        .get("translatedText")
+        .and_then(serde_json::Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or("LibreTranslate 没有返回有效译文")?;
+    Ok(translated.to_owned())
 }
 
 pub fn ollama_models() -> Result<Vec<String>, String> {
@@ -354,7 +481,7 @@ fn ollama_delete_at(host: &str, model: &str) -> Result<(), String> {
 }
 
 fn ollama_models_at(host: &str) -> Result<Vec<String>, String> {
-    let value: serde_json::Value = http_agent()
+    let value: serde_json::Value = ollama_agent()
         .get(&format!("{}/api/tags", normalize_ollama_host(host)))
         .call()
         .map_err(|error| format!("无法连接本机 Ollama（{host}）：{error}"))?
@@ -375,8 +502,8 @@ fn ollama_chat(model: &str, messages: &[ChatMessage]) -> Result<String, String> 
     ollama_chat_at(&ollama_host(), model, messages)
 }
 
-fn ollama_chat_at(host: &str, model: &str, messages: &[ChatMessage]) -> Result<String, String> {
-    let payload = serde_json::json!({
+fn ollama_chat_payload(model: &str, messages: &[ChatMessage]) -> serde_json::Value {
+    serde_json::json!({
         "model": model,
         "messages": messages
             .iter()
@@ -387,9 +514,21 @@ fn ollama_chat_at(host: &str, model: &str, messages: &[ChatMessage]) -> Result<S
             .collect::<Vec<_>>(),
         "stream": false,
         "keep_alive": OLLAMA_MODEL_KEEP_ALIVE,
-        "options": {"temperature": 0.2},
-    });
-    let response = http_agent()
+        // Reasoning is useful for analysis, but it adds a large hidden
+        // generation step to a translation request. Ollama versions that do
+        // not support this field simply ignore it.
+        "think": false,
+        "options": {
+            "temperature": 0.0,
+            "num_ctx": OLLAMA_CONTEXT_SIZE,
+            "num_predict": OLLAMA_MAX_OUTPUT_TOKENS,
+        },
+    })
+}
+
+fn ollama_chat_at(host: &str, model: &str, messages: &[ChatMessage]) -> Result<String, String> {
+    let payload = ollama_chat_payload(model, messages);
+    let response = ollama_agent()
         .post(&format!("{}/api/chat", normalize_ollama_host(host)))
         .set("Content-Type", "application/json")
         .send_string(&payload.to_string())
@@ -408,9 +547,45 @@ fn ollama_chat_at(host: &str, model: &str, messages: &[ChatMessage]) -> Result<S
 }
 
 /// Loads the selected Ollama model into memory without generating a translation.
-/// Ollama releases it automatically after the normal five-minute idle window.
+/// The model remains resident until `ollama_unload` is called.
 pub fn ollama_load(model: &str) -> Result<(), String> {
     ollama_load_at(&ollama_host(), model)
+}
+
+/// Unloads a model from Ollama without stopping the Ollama service itself.
+/// This releases model memory when EasyTranslate exits while preserving any
+/// other application that may be using the user's Ollama daemon.
+pub fn ollama_unload(model: &str) -> Result<(), String> {
+    ollama_unload_at(&ollama_host(), model)
+}
+
+fn ollama_unload_at(host: &str, model: &str) -> Result<(), String> {
+    let model = normalize_ollama_model_reference(model);
+    if model.is_empty() {
+        return Err("未指定 Ollama 模型".into());
+    }
+    let payload = serde_json::json!({
+        "model": model,
+        "prompt": "",
+        "stream": false,
+        "keep_alive": 0,
+        "options": {
+            "num_predict": 0,
+            "num_ctx": OLLAMA_CONTEXT_SIZE,
+        },
+    });
+    let response = ollama_control_agent()
+        .post(&format!("{}/api/generate", normalize_ollama_host(host)))
+        .set("Content-Type", "application/json")
+        .send_string(&payload.to_string())
+        .map_err(|error| format!("无法卸载本地模型 {model}：{error}"))?;
+    let value: serde_json::Value = response
+        .into_json()
+        .map_err(|error| format!("本地模型 {model} 卸载返回了无效 JSON：{error}"))?;
+    if let Some(error) = value.get("error").and_then(|entry| entry.as_str()) {
+        return Err(format!("卸载本地模型 {model} 失败：{error}"));
+    }
+    Ok(())
 }
 
 fn ollama_load_at(host: &str, model: &str) -> Result<(), String> {
@@ -423,9 +598,12 @@ fn ollama_load_at(host: &str, model: &str) -> Result<(), String> {
         "prompt": "",
         "stream": false,
         "keep_alive": OLLAMA_MODEL_KEEP_ALIVE,
-        "options": {"num_predict": 0},
+        "options": {
+            "num_predict": 0,
+            "num_ctx": OLLAMA_CONTEXT_SIZE,
+        },
     });
-    let response = http_agent()
+    let response = ollama_agent()
         .post(&format!("{}/api/generate", normalize_ollama_host(host)))
         .set("Content-Type", "application/json")
         .send_string(&payload.to_string())
@@ -450,7 +628,7 @@ pub fn ollama_translate(
     glossary: &[GlossaryEntry],
 ) -> Result<String, String> {
     let source = prompt_source(source);
-    let messages = build_messages(text, &source, target, tone, glossary);
+    let messages = build_ollama_messages(text, &source, target, tone, glossary);
     ollama_chat(model, &messages)
 }
 
@@ -1050,13 +1228,14 @@ pub fn translate_codex_with_profile(
 #[cfg(test)]
 mod tests {
     use super::{
-        Tone, codex_command_in, codex_model_choices, execute_codex_command, google_request_error,
-        normalize_ollama_host, normalize_ollama_model_reference, ollama_chat_at, ollama_delete_at,
-        ollama_load_at, ollama_models_at, ollama_pull_at_with_progress, parse_system_proxy_output,
-        prompt_for, run_codex_command,
+        Tone, codex_command_in, codex_model_choices, execute_codex_command,
+        google_endpoint_candidates, google_request_error, normalize_ollama_host,
+        normalize_ollama_model_reference, ollama_agent, ollama_chat_at, ollama_chat_payload,
+        ollama_delete_at, ollama_load_at, ollama_models_at, ollama_pull_at_with_progress,
+        ollama_unload_at, parse_system_proxy_output, prompt_for, run_codex_command,
     };
     use std::{
-        io::{Read, Write},
+        io::{BufRead, BufReader, Read, Write},
         net::TcpListener,
         process::Command,
         time::{Duration, Instant},
@@ -1134,6 +1313,93 @@ printf '%s\n' "$PATH"
         assert!(!message.contains("private source text"));
         assert!(!message.contains("q="));
         assert!(message.contains("网络") || message.contains("连接"));
+    }
+
+    #[test]
+    fn google_rate_limit_error_tells_the_user_to_retry_later() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(
+                b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+        });
+        let error = ureq::get(&format!("http://{address}/translate"))
+            .call()
+            .unwrap_err();
+        let message = google_request_error(&error);
+        assert!(message.contains("稍后重试"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn google_public_endpoint_has_a_second_host_for_rate_limit_recovery() {
+        let endpoints =
+            google_endpoint_candidates("https://translate.googleapis.com/translate_a/single", true);
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(
+            endpoints[1],
+            "https://translate.google.com/translate_a/single"
+        );
+        assert_eq!(
+            google_endpoint_candidates("http://127.0.0.1/test", false),
+            ["http://127.0.0.1/test"]
+        );
+    }
+
+    #[test]
+    fn libretranslate_posts_translation_request_and_reads_translated_text() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            assert!(request_line.starts_with("POST /translate "));
+            let mut content_length = 0;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':')
+                    && name.eq_ignore_ascii_case("content-length")
+                {
+                    content_length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            let mut body = vec![0; content_length];
+            reader.read_exact(&mut body).unwrap();
+            let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let body = r#"{"translatedText":"Hola"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = reader.get_mut().write_all(response.as_bytes());
+            request
+        });
+
+        let translated = super::libretranslate_translate(
+            "Hello",
+            "en",
+            "es",
+            &format!("http://{address}"),
+            "unit-test-key",
+        )
+        .unwrap();
+
+        let request = server.join().unwrap();
+        assert_eq!(request["q"], "Hello");
+        assert_eq!(request["source"], "en");
+        assert_eq!(request["target"], "es");
+        assert_eq!(request["api_key"], "unit-test-key");
+        assert_eq!(translated, "Hola");
     }
 
     #[test]
@@ -1215,6 +1481,26 @@ printf '%s\n' "$PATH"
     }
 
     #[test]
+    fn ollama_chat_reuses_one_http_agent() {
+        let first = ollama_agent() as *const ureq::Agent;
+        let second = ollama_agent() as *const ureq::Agent;
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn ollama_chat_payload_disables_reasoning_and_caps_translation_output() {
+        let messages = [crate::local_ai::ChatMessage {
+            role: "user".into(),
+            content: "请确认。".into(),
+        }];
+        let payload = ollama_chat_payload("translategemma:12b", &messages);
+        assert_eq!(payload["stream"], false);
+        assert_eq!(payload["keep_alive"], -1);
+        assert_eq!(payload["think"], false);
+        assert_eq!(payload["options"]["num_predict"], 256);
+    }
+
+    #[test]
     fn ollama_preload_requests_load_without_generating_output_and_sets_keep_alive() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -1252,7 +1538,7 @@ printf '%s\n' "$PATH"
             assert_eq!(payload["model"], "translategemma:latest");
             assert_eq!(payload["prompt"], "");
             assert_eq!(payload["stream"], false);
-            assert_eq!(payload["keep_alive"], "5m");
+            assert_eq!(payload["keep_alive"], -1);
             assert_eq!(payload["options"]["num_predict"], 0);
             let response = r#"{"done":true,"response":""}"#;
             write!(
@@ -1269,7 +1555,59 @@ printf '%s\n' "$PATH"
     }
 
     #[test]
-    fn ollama_translation_keeps_its_model_loaded_for_five_idle_minutes() {
+    fn ollama_unload_releases_model_without_stopping_the_service() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            loop {
+                let count = stream.read(&mut chunk).unwrap();
+                request.extend_from_slice(&chunk[..count]);
+                let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
+                else {
+                    continue;
+                };
+                let header_end = header_end + 4;
+                let content_length = String::from_utf8_lossy(&request[..header_end])
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or_default();
+                if request.len() >= header_end + content_length {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request);
+            assert!(
+                request.starts_with("POST /api/generate HTTP/1.1"),
+                "{request}"
+            );
+            let body = request.split_once("\r\n\r\n").unwrap().1;
+            let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+            assert_eq!(payload["model"], "translategemma:latest");
+            assert_eq!(payload["keep_alive"], 0);
+            assert_eq!(payload["options"]["num_predict"], 0);
+            let response = r#"{"done":true,"response":""}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response.len(),
+                response
+            )
+            .unwrap();
+        });
+
+        ollama_unload_at(&format!("http://{address}"), "translategemma:latest").unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn ollama_translation_keeps_its_model_loaded_until_shutdown() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
@@ -1301,7 +1639,7 @@ printf '%s\n' "$PATH"
             let body = request.split_once("\r\n\r\n").unwrap().1;
             let payload: serde_json::Value = serde_json::from_str(body).unwrap();
             assert_eq!(payload["model"], "translategemma:latest");
-            assert_eq!(payload["keep_alive"], "5m");
+            assert_eq!(payload["keep_alive"], -1);
             let response = r#"{"message":{"content":"Please wait."}}"#;
             write!(
                 stream,

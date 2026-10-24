@@ -13,6 +13,8 @@ fn main() {
         siliconflow_endpoint: easytranslate::llm::SILICONFLOW_DEFAULT_ENDPOINT.into(),
         siliconflow_model: easytranslate::llm::SILICONFLOW_DEFAULT_MODEL.into(),
         siliconflow_api_key: String::new(),
+        libretranslate_endpoint: String::new(),
+        libretranslate_api_key: String::new(),
         codex_model: String::new(),
         local_translator: Some(Arc::new(LocalTranslator::new(
             LocalTranslator::default_cache_root(),

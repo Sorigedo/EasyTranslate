@@ -12,7 +12,7 @@ Updated: 2026-10-20. Background-only validation remains the active constraint.
 | Selection, articles and screenshots | Selection flow, paragraph splitting, local OCR, cancellation and invalid-image tests | Foreground selection and multi-display screenshot checks |
 | Unlimited local translation | Default `LocalAi`; no account or character quota; Mozilla model cache is local after download | First download on a clean machine |
 | Translation speed and quality | `fxtranslate` benchmark: `zh-Hans→en` model 54,556,676 bytes, `en→zh-Hans` 51,934,991 bytes; cold route preparation 2.8 s / 23.8 s, warm samples 39–81 ms | Larger corpus and human review; known deadline/word-choice errors remain |
-| Packaging | `打包.command` produces app, ZIP and DMG; `codesign --verify --deep --strict` passes | No notarization or universal binary requested; Intel not tested |
+| Packaging | `run.command` produces app, ZIP and DMG; `codesign --verify --deep --strict` passes | No notarization or universal binary requested; Intel not tested |
 
 ## Local model benchmark
 

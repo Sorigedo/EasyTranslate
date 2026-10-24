@@ -4,7 +4,7 @@ Rust 编写的 macOS 菜单栏翻译工具。按快捷键打开右上角翻译�
 
 ## 翻译服务
 
-新安装默认选择本地 Firefox Translations Marian，联网授权初始关闭。翻译页面的服务菜单包含本地 Marian、谷歌翻译和 OpenAI Codex CLI；在设置中刷新 Ollama 后，每个已安装模型也会作为独立选项加入菜单。
+新安装默认选择本地 Firefox Translations Marian，联网授权初始关闭。翻译页面的服务菜单包含本地 Marian、谷歌翻译、LibreTranslate 和 OpenAI Codex CLI；在设置中刷新 Ollama 后，每个已安装模型也会作为独立选项加入菜单。
 
 本地 Marian（由 `fxtranslate` 驱动）在本机运行，原文不会发送到翻译服务，也没有日/月字符额度或账号要求。每个语言方向首次使用时从 Mozilla Remote Settings/CDN 下载一次并缓存到：
 
@@ -16,9 +16,11 @@ Rust 编写的 macOS 菜单栏翻译工具。按快捷键打开右上角翻译�
 
 选择“谷歌翻译”会调用 Google 网页翻译接口，需要打开“启用联网翻译”，不需要 API Key。接口可能受 Google 限流或变更影响。
 
+可在“设置 → 服务设置”选择 LibreTranslate，填写你部署的 LibreTranslate API 地址和实例要求的可选 API Key，保存后即可在翻译卡片的“更换”菜单选择它。地址可填服务根地址（例如 `http://localhost:5000`），程序会请求 `/translate`。LibreTranslate 是开源软件，但公共服务器可能需要 Key、限流或不可用；EasyTranslate 不提供或默认信任公共实例。启用联网翻译后，原文会发送到你填写的服务器。实例需安装所选语言方向的翻译模型；简体中文请求会使用 `zh` 语言代码。
+
 选择“OpenAI（本地 CLI）”会启动本机 `codex exec` 子进程。请先安装并登录 Codex CLI；设置中的“Codex 模型”下拉可选择常用模型，也可以选择“跟随本机 Codex 配置”。翻译使用临时会话和低推理档，减少启动和思考开销；通常 `gpt-6-sol` 会比高推理模型更快。发送原文前需要打开联网授权；CLI 不可用时会在状态提示中说明原因。图形界面启动时会从标准 Homebrew 和用户 CLI 目录查找 Codex，也会向子进程传递代理环境变量。
 
-默认 `Option+D` 全局开关翻译窗口。Google 翻译及在线模型优先使用 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY` 环境变量；未设置时，macOS 会自动读取系统 HTTP/HTTPS 代理（例如 VPN 客户端提供的 `127.0.0.1:7890`）。
+默认 `Option+D` 全局开关翻译窗口。Google、LibreTranslate 及在线模型优先使用 `HTTP_PROXY`、`HTTPS_PROXY` 或 `ALL_PROXY` 环境变量；未设置时，macOS 会自动读取系统 HTTP/HTTPS 代理（例如 VPN 客户端提供的 `127.0.0.1:7890`）。
 
 使用本地聊天模型时，请先启动 Ollama。设置页选择一个 Ollama 服务后，可以点击“浏览 Ollama 模型库”查找模型，把模型名（如 `qwen2.5:3b`、`hf.co/...`）或模型网页地址粘贴到“模型名 / 地址”并点击“下载并添加”；下载完成后会自动出现在翻译页面菜单。选中要移除的 Ollama 模型后点击“删除当前模型”，确认后会同时删除本机模型文件。也可以点击“刷新 Ollama 模型”同步现有安装。应用请求 `http://127.0.0.1:11434` 的原生 API，也可用 `OLLAMA_HOST` 指定地址。Ollama 模型在本机运行，不需要联网授权。连接失败时会显示错误，不会自动切换服务。
 
@@ -46,7 +48,7 @@ cargo test --locked
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 bash scripts/test-background.sh
-./打包.command
+./run.command
 open dist/EasyTranslate.app
 ```
 

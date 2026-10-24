@@ -19,7 +19,7 @@ Requires macOS 26+, Rust, and Apple Command Line Tools.
 - `cargo fmt --check` — verify formatting (run `cargo fmt` to fix).
 - `cargo clippy --all-targets -- -D warnings` — lint; all warnings are errors.
 - `bash scripts/test-background.sh` — background-safe test script; it must not activate windows, simulate input, read chat/clipboard, or download translation models.
-- `./打包.command` — package `dist/EasyTranslate.app` plus ZIP and DMG with local signing.
+- `./run.command` — package `dist/EasyTranslate.app` plus ZIP and DMG with local signing.
 
 ## Coding Style & Naming Conventions
 
